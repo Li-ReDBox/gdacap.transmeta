@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"hash"
 	"net"
-	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -19,6 +18,7 @@ type Message struct {
 }
 
 type Notification struct {
+	User     string
 	Name     string
 	Category string
 	Comment  *string
@@ -44,7 +44,7 @@ type Output struct {
 
 func Send(s []byte) (err error) {
 	var conn net.Conn
-	if conn, err = net.DialTimeout("tcp", server+":"+strconv.Itoa(port), timeout*1e9); err != nil {
+	if conn, err = net.DialTimeout("tcp", server+":"+strconv.Itoa(port), timeout); err != nil {
 		return
 	}
 	defer conn.Close()
@@ -110,8 +110,16 @@ func (l *Linker) Process(args []string) (err error) {
 	return
 }
 
-func (l *Linker) Notify(name, category, comment, tool, version string, signer Signer) (err error) {
+func pointer(s string) *string {
+	if s != "" {
+		return &s
+	}
+	return nil
+}
+
+func (l *Linker) Notify(name, category, comment, tool, version, username string) (err error) {
 	n := Notification{
+		User:     username,
 		Name:     name,
 		Category: category,
 		Comment:  pointer(comment),
@@ -123,24 +131,9 @@ func (l *Linker) Notify(name, category, comment, tool, version string, signer Si
 		Output: l.Outputs,
 	}
 
-	var (
-		m Message
-		b []byte
-	)
+	var b []byte
+
 	if b, err = json.Marshal(n); err != nil {
-		os.Exit(0)
-	} else {
-		var signature string
-		if signature, err = signer.Sign(b); err != nil {
-			return
-		}
-		m = Message{
-			WARNING:      WARNING,
-			Notification: string(b),
-			Signature:    signature,
-		}
-	}
-	if b, err = json.Marshal(m); err != nil {
 		return
 	} else {
 

@@ -13,10 +13,10 @@ var bufferLen = 4096
 func HashFile(h hash.Hash, name string) (s string) {
 	if f, err := os.Open(name); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		os.Exit(0)
+		os.Exit(1)
 	} else if sum, err := Hash(h, f); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		os.Exit(0)
+		os.Exit(1)
 	} else {
 		s = fmt.Sprintf("%x", sum)
 	}
