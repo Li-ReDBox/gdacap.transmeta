@@ -1,4 +1,4 @@
-package main
+package common
 
 import (
 	"encoding/json"
@@ -9,49 +9,33 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 )
 
-const WARNING = "Do not unmarshall Notification if it is not validly signed with Signature!"
-
-type Message struct {
-	WARNING, Notification, Signature string
+type Sender struct {
+	Confdir string
+	PubKey  string
+	PrivKey string
+	Unsafe  bool
+	Server  string
+	Port    int
+	Timeout time.Duration
 }
 
-type Notification struct {
-	User     string
-	Name     string
-	Category string
-	Comment  *string
-	Tool     Tool
-	Input    []Input
-	Output   []Output
-}
-
-type Tool struct {
-	Name    string
-	Version string
-}
-
-type Input struct {
-	Hash string
-}
-
-type Output struct {
-	OriginalName string
-	Hash         string
-	Type         string
-}
-
-func Send(s []byte) (err error) {
+func (s *Sender) Send(b []byte) (err error) {
 	var conn net.Conn
-	if conn, err = net.DialTimeout("tcp", server+":"+strconv.Itoa(port), timeout); err != nil {
+	if conn, err = net.DialTimeout("tcp", s.Server+":"+strconv.Itoa(s.Port), s.Timeout); err != nil {
 		return
 	}
-	defer conn.Close()
+	tconn, err := TlsConn(conn, filepath.Join(s.Confdir, s.PubKey), filepath.Join(s.Confdir, s.PrivKey), s.Unsafe)
+	if err != nil {
+		return
+	}
+	defer tconn.Close()
 
 	var n int
-	n, err = conn.Write(s)
-	if n != len(s) && err == nil {
+	n, err = tconn.Write(b)
+	if n != len(b) && err == nil {
 		err = errors.New("Message length mismatch")
 	}
 
@@ -59,10 +43,11 @@ func Send(s []byte) (err error) {
 }
 
 type Linker struct {
-	Hash         hash.Hash
-	Inputs       []Input
-	Outputs      []Output
-	Instructions []string
+	Hash            hash.Hash
+	Inputs          []Input
+	Outputs         []Output
+	Subuser, Server string
+	Instructions    []string
 }
 
 func (l *Linker) Process(args []string) (err error) {
@@ -89,8 +74,8 @@ func (l *Linker) Process(args []string) (err error) {
 					Hash:         h,
 					Type:         so[1],
 				})
-				if err := SecureCopy(so[0], fmt.Sprintf("%s@%s:~%s/%s", subuser, server, subuser, h)); err != nil {
-					l.Instructions = append(l.Instructions, fmt.Sprintf("scp %s %s@%s:~%s/%s\n", so[0], subuser, server, subuser, h))
+				if err := SecureCopy(so[0], fmt.Sprintf("%s@%s:~%s/%s", l.Subuser, l.Server, l.Subuser, h)); err != nil {
+					l.Instructions = append(l.Instructions, fmt.Sprintf("scp %s %s@%s:~%s/%s\n", so[0], l.Subuser, l.Server, l.Subuser, h))
 				}
 			} else {
 				if len(strings.Split(args[i], ",")) != 1 {
@@ -117,9 +102,8 @@ func pointer(s string) *string {
 	return nil
 }
 
-func (l *Linker) Notify(name, category, comment, tool, version, username string) (err error) {
+func (l *Linker) Notify(name, category, comment, tool, version string, sender *Sender) (err error) {
 	n := Notification{
-		User:     username,
 		Name:     name,
 		Category: category,
 		Comment:  pointer(comment),
@@ -137,7 +121,7 @@ func (l *Linker) Notify(name, category, comment, tool, version, username string)
 		return
 	} else {
 
-		if err = Send(b); err == nil {
+		if err = sender.Send(b); err == nil {
 			if len(l.Instructions) > 0 {
 				err = errors.New(fmt.Sprintf("Message sent successfully. Now execute the following copy commands:\n%s\n", strings.Join(l.Instructions, "\n")))
 			} else {
