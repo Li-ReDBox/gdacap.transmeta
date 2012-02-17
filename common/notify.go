@@ -39,12 +39,10 @@ func NewLinks(h hash.Hash, args []string) (l *Links, err error) {
 				h := HashFile(l.Hash, so[0])
 				l.Outputs = append(l.Outputs, Output{
 					OriginalName: n,
+					FullPath:     so[0],
 					Hash:         h,
 					Type:         so[1],
 				})
-				//	if err := SecureCopy(so[0], fmt.Sprintf("%s@%s:~%s/%s", l.Subuser, l.Server, l.Subuser, h)); err != nil {
-				//		l.Instructions = append(l.Instructions, fmt.Sprintf("scp %s %s@%s:~%s/%s\n", so[0], l.Subuser, l.Server, l.Subuser, h))
-				//	}
 			} else {
 				if len(strings.Split(args[i], ",")) != 1 {
 					err = errors.New(fmt.Sprintf("Bad inputfile: %q\n", args[i]))
@@ -66,9 +64,9 @@ func NewLinks(h hash.Hash, args []string) (l *Links, err error) {
 type Notification struct {
 	Name     string
 	Category string
-	Comment  *string
+	Comment  *string `json:",omitempty"`
 	Tool     Tool
-	Input    []Input
+	Input    []Input `json:",omitempty"`
 	Output   []Output
 }
 
@@ -83,6 +81,7 @@ type Input struct {
 
 type Output struct {
 	OriginalName string
+	FullPath     string `json:"-"`
 	Hash         string
 	Type         string
 }

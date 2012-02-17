@@ -25,3 +25,10 @@ func exists(name string) (ok bool, mode os.FileMode, err error) {
 
 	return true, fi.Mode(), nil
 }
+
+func Chomp(s []byte) []byte {
+	if s[len(s)-1] == '\n' {
+		return s[:len(s)-1]
+	}
+	return s
+}

@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/user"
 	"path/filepath"
+	"strings"
 	"time"
 	"transmeta/common"
 )
@@ -18,19 +19,25 @@ const config = ".transmetaserver"
 var hashFunc = md5.New()
 
 var (
-	server        = "andsbox"
-	subuser       = "subuser" // user on the server accepting file submission
+	server        string // host receiving files by scp
+	subuser       string // user on the server accepting file submission
+	subpath       string // path in ~subuser for copy
 	userAndServer []byte
-	username      string
-	organisation  []string
-	confdir       string
-	port          int
-	keygen        bool
-	force         bool
-	network       = "tcp"
-	laddr         = "0.0.0.0"
-	thankyou      = []byte("Thankyou\n")
-	random        = rand.Reader
+
+	username     string   // messenger admin
+	organisation []string // optional
+
+	network = "tcp"
+	laddr   = "0.0.0.0"
+	port    int
+
+	confdir string
+	keygen  bool
+	force   bool
+
+	thankyou = []byte("Thankyou\n")
+
+	random = rand.Reader
 )
 
 func init() {
@@ -40,18 +47,19 @@ func init() {
 	} else {
 		confdir = filepath.Join(u.HomeDir, config)
 	}
-	userAndServer = []byte(fmt.Sprintf("%s@%s:~%s/\n", subuser, server, subuser))
 
 	flag.Usage = func() {
 		fmt.Fprintf(os.Stderr, "Usage of %s:\n\n", os.Args[0])
-		fmt.Fprintf(os.Stderr, " %s > \"serial\\tusername\\tJSON\"\n", os.Args[0])
+		fmt.Fprintf(os.Stderr, " %s -fhost <scp target> -fuser <scp target user> [-fpath <scp target path>] > \"serial\\tusername\\tJSON\"\n", os.Args[0])
 		fmt.Fprintf(os.Stderr, " %s -keygen -u <user>\n", os.Args[0])
 		fmt.Fprintln(os.Stderr)
 		flag.PrintDefaults()
 		fmt.Fprintln(os.Stderr)
 	}
 	flag.StringVar(&username, "u", "", "Username for certificate generation (required with keygen).")
-	flag.StringVar(&server, "host", "localhost", "File server.")
+	flag.StringVar(&server, "fhost", "", "File server (required).")
+	flag.StringVar(&subuser, "fuser", "", "Receiving user (required).")
+	flag.StringVar(&subpath, "fpath", "", "Path in receiving user's $HOME.")
 	flag.IntVar(&port, "port", 9001, "Over 9000.")
 	flag.BoolVar(&force, "f", false, "Force overwrite of files.")
 	flag.BoolVar(&keygen, "keygen", false, "Generate a key pair for the specified user.")
@@ -64,6 +72,12 @@ func init() {
 		os.Exit(0)
 	}
 
+	requiredFlags()
+
+	userAndServer = []byte(fmt.Sprintf("%s@%s:~%s/\n", subuser, server, filepath.Join(subuser, subpath)))
+}
+
+func requiredFlags() {
 	if keygen {
 		if username == "" {
 			fmt.Fprintln(os.Stderr, "Missing required 'u' flag.")
@@ -71,6 +85,19 @@ func init() {
 			os.Exit(0)
 		}
 		return
+	}
+
+	failed := []string{}
+	if server == "" {
+		failed = append(failed, "fhost")
+	}
+	if subuser == "" {
+		failed = append(failed, "fuser")
+	}
+	if len(failed) > 0 {
+		fmt.Fprintf(os.Stderr, "Missing required flags: %s.\n", strings.Join(failed, ", "))
+		flag.Usage()
+		os.Exit(1)
 	}
 }
 
@@ -113,9 +140,9 @@ func main() {
 		if err != nil {
 			fmt.Fprintln(os.Stderr, err)
 		}
-		fmt.Fprintf(os.Stderr, "%v %s %s %s %s\n", time.Now(), serial, name, challenge, response)
+		fmt.Fprintf(os.Stderr, "%v %s %s Recv:%s Sent:%s\n", time.Now(), serial, name, common.Chomp(challenge), common.Chomp(response))
 		if string(challenge) != "REQUEST TARGET\n" {
-			fmt.Printf("%s\t%s\t%s\n", serial, name, challenge)
+			fmt.Printf("%s\t%s\t%s\n", serial, name, common.Chomp(challenge))
 		}
 		conn.Close()
 	}
