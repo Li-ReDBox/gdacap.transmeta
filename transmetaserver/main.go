@@ -3,11 +3,13 @@ package main
 import (
 	"crypto/md5"
 	"crypto/rand"
+	"crypto/tls"
 	"flag"
 	"fmt"
 	"os"
 	"os/user"
 	"path/filepath"
+	"time"
 	"transmeta/common"
 )
 
@@ -16,15 +18,19 @@ const config = ".transmetaserver"
 var hashFunc = md5.New()
 
 var (
-	server       string         // assumes JSON and scp are to the same server
-	subuser      = "submission" // user on the server accepting file submission
-	username     string
-	organisation []string
-	confdir      string
-	port         int
-	keygen       bool
-	force        bool
-	random       = rand.Reader
+	server        = "andsbox"
+	subuser       = "subuser" // user on the server accepting file submission
+	userAndServer []byte
+	username      string
+	organisation  []string
+	confdir       string
+	port          int
+	keygen        bool
+	force         bool
+	network       = "tcp"
+	laddr         = "0.0.0.0"
+	thankyou      = []byte("Thankyou\n")
+	random        = rand.Reader
 )
 
 func init() {
@@ -34,6 +40,7 @@ func init() {
 	} else {
 		confdir = filepath.Join(u.HomeDir, config)
 	}
+	userAndServer = []byte(fmt.Sprintf("%s@%s:~%s/\n", subuser, server, subuser))
 
 	flag.Usage = func() {
 		fmt.Fprintf(os.Stderr, "Usage of %s:\n\n", os.Args[0])
@@ -57,10 +64,6 @@ func init() {
 		os.Exit(0)
 	}
 
-	requiredFlags()
-}
-
-func requiredFlags() {
 	if keygen {
 		if username == "" {
 			fmt.Fprintln(os.Stderr, "Missing required 'u' flag.")
@@ -81,16 +84,39 @@ func main() {
 		os.Exit(0)
 	}
 
-	tconn, err := common.TlsListener(port, filepath.Join(confdir, common.Pubkey), filepath.Join(confdir, common.Privkey))
+	listener, err := common.NewServer(
+		network,
+		fmt.Sprintf("0.0.0.0:%d", port),
+		filepath.Join(confdir, common.Pubkey),
+		filepath.Join(confdir, common.Privkey))
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
+
+	s := func(c []byte) (r []byte) {
+		if string(c) == "REQUEST TARGET\n" {
+			r = userAndServer
+		} else {
+			r = thankyou
+		}
+
+		return
+	}
+
 	for {
-		serial, user, note, err := common.GetMessage(tconn)
+		conn, err := listener.Accept()
 		if err != nil {
 			fmt.Fprintln(os.Stderr, err)
 		}
-		fmt.Printf("%s\t%s\t%s\n", serial, user, note)
+		serial, name, challenge, response, err := (*common.Dialog)(conn.(*tls.Conn)).ReceiveSend(s)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+		}
+		fmt.Fprintf(os.Stderr, "%v %s %s %s %s\n", time.Now(), serial, name, challenge, response)
+		if string(challenge) != "REQUEST TARGET\n" {
+			fmt.Printf("%s\t%s\t%s\n", serial, name, challenge)
+		}
+		conn.Close()
 	}
 }

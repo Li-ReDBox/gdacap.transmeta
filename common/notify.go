@@ -5,52 +5,19 @@ import (
 	"errors"
 	"fmt"
 	"hash"
-	"net"
 	"path/filepath"
-	"strconv"
 	"strings"
-	"time"
 )
 
-type Sender struct {
-	Confdir string
-	PubKey  string
-	PrivKey string
-	Unsafe  bool
-	Server  string
-	Port    int
-	Timeout time.Duration
+type Links struct {
+	Hash    hash.Hash
+	Inputs  []Input
+	Outputs []Output
 }
 
-func (s *Sender) Send(b []byte) (err error) {
-	var conn net.Conn
-	if conn, err = net.DialTimeout("tcp", s.Server+":"+strconv.Itoa(s.Port), s.Timeout); err != nil {
-		return
-	}
-	tconn, err := TlsConn(conn, filepath.Join(s.Confdir, s.PubKey), filepath.Join(s.Confdir, s.PrivKey), s.Unsafe)
-	if err != nil {
-		return
-	}
-	defer tconn.Close()
+func NewLinks(h hash.Hash, args []string) (l *Links, err error) {
+	l = &Links{Hash: h}
 
-	var n int
-	n, err = tconn.Write(b)
-	if n != len(b) && err == nil {
-		err = errors.New("Message length mismatch")
-	}
-
-	return
-}
-
-type Linker struct {
-	Hash            hash.Hash
-	Inputs          []Input
-	Outputs         []Output
-	Subuser, Server string
-	Instructions    []string
-}
-
-func (l *Linker) Process(args []string) (err error) {
 	outputList := true
 	for i := range args {
 		switch args[i] {
@@ -65,7 +32,8 @@ func (l *Linker) Process(args []string) (err error) {
 			if outputList {
 				so := strings.Split(args[i], ",")
 				if len(so) != 2 {
-					err = errors.New(fmt.Sprintf("Bad outputfile: %q\n", args[i]))
+					err = errors.New(fmt.Sprintf("Bad outputfile (should be in the form <name>,<type>): %q\n", args[i]))
+					return
 				}
 				_, n := filepath.Split(so[0])
 				h := HashFile(l.Hash, so[0])
@@ -74,9 +42,9 @@ func (l *Linker) Process(args []string) (err error) {
 					Hash:         h,
 					Type:         so[1],
 				})
-				if err := SecureCopy(so[0], fmt.Sprintf("%s@%s:~%s/%s", l.Subuser, l.Server, l.Subuser, h)); err != nil {
-					l.Instructions = append(l.Instructions, fmt.Sprintf("scp %s %s@%s:~%s/%s\n", so[0], l.Subuser, l.Server, l.Subuser, h))
-				}
+				//	if err := SecureCopy(so[0], fmt.Sprintf("%s@%s:~%s/%s", l.Subuser, l.Server, l.Subuser, h)); err != nil {
+				//		l.Instructions = append(l.Instructions, fmt.Sprintf("scp %s %s@%s:~%s/%s\n", so[0], l.Subuser, l.Server, l.Subuser, h))
+				//	}
 			} else {
 				if len(strings.Split(args[i], ",")) != 1 {
 					err = errors.New(fmt.Sprintf("Bad inputfile: %q\n", args[i]))
@@ -95,15 +63,32 @@ func (l *Linker) Process(args []string) (err error) {
 	return
 }
 
-func pointer(s string) *string {
-	if s != "" {
-		return &s
-	}
-	return nil
+type Notification struct {
+	Name     string
+	Category string
+	Comment  *string
+	Tool     Tool
+	Input    []Input
+	Output   []Output
 }
 
-func (l *Linker) Notify(name, category, comment, tool, version string, sender *Sender) (err error) {
-	n := Notification{
+type Tool struct {
+	Name    string
+	Version string
+}
+
+type Input struct {
+	Hash string
+}
+
+type Output struct {
+	OriginalName string
+	Hash         string
+	Type         string
+}
+
+func NewNotification(name, category, comment, tool, version string, l *Links) *Notification {
+	return &Notification{
 		Name:     name,
 		Category: category,
 		Comment:  pointer(comment),
@@ -114,23 +99,21 @@ func (l *Linker) Notify(name, category, comment, tool, version string, sender *S
 		Input:  l.Inputs,
 		Output: l.Outputs,
 	}
+}
 
-	var b []byte
+func pointer(s string) *string {
+	if s != "" {
+		return &s
+	}
+	return nil
+}
 
+func (n *Notification) Marshal() (b []byte, err error) {
 	if b, err = json.Marshal(n); err != nil {
 		return
-	} else {
-
-		if err = sender.Send(b); err == nil {
-			if len(l.Instructions) > 0 {
-				err = errors.New(fmt.Sprintf("Message sent successfully. Now execute the following copy commands:\n%s\n", strings.Join(l.Instructions, "\n")))
-			} else {
-				err = errors.New("Message and files sent successfully.")
-			}
-		} else {
-			err = errors.New(fmt.Sprintf("Message send failed: %q.\n", err))
-		}
 	}
+
+	b = append(b, '\n')
 
 	return
 }
