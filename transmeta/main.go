@@ -1,10 +1,12 @@
 package main
 
 import (
+	"code.google.com/p/go.net/websocket"
 	"crypto/md5"
 	"crypto/rand"
 	"flag"
 	"fmt"
+	"log"
 	"os"
 	"os/user"
 	"path/filepath"
@@ -192,4 +194,48 @@ func main() {
 		}
 	}
 	fmt.Fprintf(os.Stderr, "\n%s, %s.\n", common.Chomp(response), sname)
+
+	origin := "http://localhost/"
+	{
+		url := "ws://localhost:12345/request"
+		ws, err := websocket.Dial(url, "", origin)
+		if err != nil {
+			log.Fatal(err)
+		}
+		var m string
+		if err := websocket.Message.Receive(ws, &m); err != nil {
+			log.Fatal(err)
+		} else {
+			fmt.Println(m)
+		}
+	}
+	{
+		url := "ws://localhost:12345/notify"
+		ws, err := websocket.Dial(url, "", origin)
+		if err != nil {
+			log.Fatal(err)
+		}
+		if err := websocket.Message.Send(ws, "~JSON"); err != nil {
+			log.Fatal(err)
+		}
+		var m string
+		if err := websocket.Message.Receive(ws, &m); err != nil {
+			log.Fatal(err)
+		} else {
+			fmt.Println(m)
+		}
+	}
+	{
+		url := "ws://localhost:12345/verify"
+		ws, err := websocket.Dial(url, "", origin)
+		if err != nil {
+			log.Fatal(err)
+		}
+		var m string
+		if err := websocket.Message.Receive(ws, &m); err != nil {
+			log.Fatal(err)
+		} else {
+			fmt.Println(m)
+		}
+	}
 }

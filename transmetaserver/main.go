@@ -1,11 +1,14 @@
 package main
 
 import (
+	"code.google.com/p/go.net/websocket"
 	"crypto/md5"
 	"crypto/rand"
 	"crypto/tls"
 	"flag"
 	"fmt"
+	"log"
+	"net/http"
 	"os"
 	"os/user"
 	"path/filepath"
@@ -101,6 +104,27 @@ func requiredFlags() {
 	}
 }
 
+func RequestServer(ws *websocket.Conn) {
+	m := "user@server"
+	websocket.Message.Send(ws, m)
+}
+
+func NotifyServer(ws *websocket.Conn) {
+	var m string
+	websocket.Message.Receive(ws, &m)
+	if m == "JSON" {
+		fmt.Println(m)
+		websocket.Message.Send(ws, "thankyou")
+	} else {
+		websocket.Message.Send(ws, "bad message")
+	}
+}
+
+func VerifyServer(ws *websocket.Conn) {
+	m := "verified"
+	websocket.Message.Send(ws, m)
+}
+
 func main() {
 	if keygen {
 		if serial, err := common.Keygen(username, organisation, true, confdir, force); err != nil {
@@ -146,4 +170,8 @@ func main() {
 		}
 		conn.Close()
 	}
+	http.Handle("/request", websocket.Handler(RequestServer))
+	http.Handle("/notify", websocket.Handler(NotifyServer))
+	http.Handle("/verify", websocket.Handler(VerifyServer))
+	log.Fatalf("ListenAndServeTLS: ", http.ListenAndServeTLS(":12345", nil))
 }
