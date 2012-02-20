@@ -3,7 +3,7 @@ package main
 import (
 	"code.google.com/p/go.net/websocket"
 	"crypto/tls"
-	"crypto/x509"
+//	"crypto/x509"
 	"flag"
 	"fmt"
 	"log"
@@ -167,11 +167,11 @@ func main() {
 
 	{
 		n := common.NewNotification(name, category, comment, tool, version, l)
-
+/*
 		if x509Cert, err := x509.ParseCertificate(cert.Certificate[0]); err == nil {
 			n.Username, n.Serial = x509Cert.Subject.CommonName, x509Cert.SerialNumber.String()
 		}
-
+*/
 		config.Location, err = url.ParseRequest(fmt.Sprintf("wss://%s:%d/notify", server, port))
 		if err != nil {
 			log.Fatal(err)

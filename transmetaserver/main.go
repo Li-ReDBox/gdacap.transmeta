@@ -3,10 +3,12 @@ package main
 import (
 	"code.google.com/p/go.net/websocket"
 	"crypto/rand"
+	"crypto/tls"
 	"encoding/json"
 	"flag"
 	"fmt"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"os/user"
@@ -118,7 +120,7 @@ func NotificationServer(ws *websocket.Conn) {
 	if request := ws.Request(); len(request.TLS.PeerCertificates) == 0 {
 		websocket.Message.Send(ws, "bad message - identity unverified")
 		log.Printf("Bad message: No peer certificate %#v.", request.TLS)
-		//goto bye
+		goto bye
 	} else {
 		cert := request.TLS.PeerCertificates[0]
 		note.Serial, note.Username = cert.SerialNumber.String(), cert.Subject.CommonName
@@ -161,11 +163,38 @@ func main() {
 		os.Exit(0)
 	}
 
+	server := &http.Server{
+		Addr:    fmt.Sprintf("0.0.0.0:%d", port),
+		Handler: nil,
+	}
+
+	var tlsListener net.Listener
+	{
+		config := &tls.Config{
+			Rand:       rand.Reader,
+			ClientAuth: tls.RequireAnyClientCert,
+			NextProtos: []string{"http/1.1"},
+		}
+
+		var err error
+		config.Certificates = make([]tls.Certificate, 1)
+		config.Certificates[0], err = tls.LoadX509KeyPair(
+			filepath.Join(confdir, common.Pubkey),
+			filepath.Join(confdir, common.Privkey))
+		if err != nil {
+			log.Fatalf("Could not load server certificates: %v", err)
+		}
+
+		conn, err := net.Listen("tcp", server.Addr)
+		if err != nil {
+			log.Fatalf("Could not create tcp connection: %v", err)
+		}
+
+		tlsListener = tls.NewListener(conn, config)
+
+	}
+
 	http.Handle("/request", websocket.Handler(RequestServer))
 	http.Handle("/notify", websocket.Handler(NotificationServer))
-	log.Fatalf("ListenAndServeTLS: ", http.ListenAndServeTLS(
-		fmt.Sprintf("0.0.0.0:%d", port),
-		filepath.Join(confdir, common.Pubkey),
-		filepath.Join(confdir, common.Privkey),
-		nil))
+	log.Fatalf("ListenAndServeTLS: ", server.Serve(tlsListener))
 }
