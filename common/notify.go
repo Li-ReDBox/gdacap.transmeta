@@ -62,6 +62,8 @@ func NewLinks(h hash.Hash, args []string) (l *Links, err error) {
 }
 
 type Notification struct {
+	Username string `json:",omitempty"`
+	Serial   string `json:",omitempty"`
 	Name     string
 	Category string
 	Comment  *string `json:",omitempty"`

@@ -2,9 +2,8 @@ package main
 
 import (
 	"code.google.com/p/go.net/websocket"
-	"crypto/md5"
 	"crypto/rand"
-	"crypto/tls"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"log"
@@ -13,19 +12,16 @@ import (
 	"os/user"
 	"path/filepath"
 	"strings"
-	"time"
 	"transmeta/common"
 )
 
 const config = ".transmetaserver"
 
-var hashFunc = md5.New()
-
 var (
 	server        string // host receiving files by scp
 	subuser       string // user on the server accepting file submission
 	subpath       string // path in ~subuser for copy
-	userAndServer []byte
+	userAndServer string
 
 	username     string   // messenger admin
 	organisation []string // optional
@@ -37,8 +33,6 @@ var (
 	confdir string
 	keygen  bool
 	force   bool
-
-	thankyou = []byte("Thankyou\n")
 
 	random = rand.Reader
 )
@@ -77,7 +71,7 @@ func init() {
 
 	requiredFlags()
 
-	userAndServer = []byte(fmt.Sprintf("%s@%s:~%s/\n", subuser, server, filepath.Join(subuser, subpath)))
+	userAndServer = fmt.Sprintf("%s@%s:~%s/", subuser, server, filepath.Join(subuser, subpath))
 }
 
 func requiredFlags() {
@@ -105,24 +99,56 @@ func requiredFlags() {
 }
 
 func RequestServer(ws *websocket.Conn) {
-	m := "user@server"
-	websocket.Message.Send(ws, m)
+	websocket.Message.Send(ws, userAndServer)
 }
 
-func NotifyServer(ws *websocket.Conn) {
-	var m string
+func NotificationServer(ws *websocket.Conn) {
+	var (
+		m    string
+		note common.Notification
+	)
+
 	websocket.Message.Receive(ws, &m)
-	if m == "JSON" {
-		fmt.Println(m)
-		websocket.Message.Send(ws, "thankyou")
-	} else {
-		websocket.Message.Send(ws, "bad message")
+	if err := json.Unmarshal([]byte(m), &note); err != nil {
+		websocket.Message.Send(ws, "bad message - could not parse")
+		log.Printf("Bad message: malformed JSON %q: %v.", m, err)
+		goto bye
 	}
-}
 
-func VerifyServer(ws *websocket.Conn) {
-	m := "verified"
-	websocket.Message.Send(ws, m)
+	if request := ws.Request(); len(request.TLS.PeerCertificates) == 0 {
+		websocket.Message.Send(ws, "bad message - identity unverified")
+		log.Printf("Bad message: No peer certificate %#v.", request.TLS)
+		//goto bye
+	} else {
+		cert := request.TLS.PeerCertificates[0]
+		note.Serial, note.Username = cert.SerialNumber.String(), cert.Subject.CommonName
+	}
+
+	for _, file := range note.Output {
+		fp := filepath.Join("/home", subuser, subpath, file.Hash)
+		if ok, _, err := common.Exists(fp); err != nil {
+			websocket.Message.Send(ws, fmt.Sprintf("Server fault: %v.", err))
+			log.Printf("Server fault: %v", err)
+		} else if !ok {
+			websocket.Message.Send(ws, fmt.Sprintf("%q is not on the server at %q.", file.OriginalName, fp))
+		} else {
+			if hs := common.HashFile(common.HashFunc, fp); hs != file.Hash {
+				websocket.Message.Send(ws, fmt.Sprintf("%q did not verify correctly: %s != %s.", file.OriginalName, hs, file.Hash))
+			} else {
+				websocket.Message.Send(ws, fmt.Sprintf("%q verified correctly.", file.OriginalName))
+			}
+		}
+	}
+
+	if b, err := json.Marshal(note); err != nil {
+		websocket.Message.Send(ws, fmt.Sprintf("Notification not logged due to internal error, please notify admin: %v", err))
+		log.Printf("Notification not logged - JSON fault: %v", err)
+	} else {
+		fmt.Println(string(b))
+	}
+
+bye:
+	websocket.Message.Send(ws, "Thankyou.")
 }
 
 func main() {
@@ -135,43 +161,11 @@ func main() {
 		os.Exit(0)
 	}
 
-	listener, err := common.NewServer(
-		network,
+	http.Handle("/request", websocket.Handler(RequestServer))
+	http.Handle("/notify", websocket.Handler(NotificationServer))
+	log.Fatalf("ListenAndServeTLS: ", http.ListenAndServeTLS(
 		fmt.Sprintf("0.0.0.0:%d", port),
 		filepath.Join(confdir, common.Pubkey),
-		filepath.Join(confdir, common.Privkey))
-	if err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		os.Exit(1)
-	}
-
-	s := func(c []byte) (r []byte) {
-		if string(c) == "REQUEST TARGET\n" {
-			r = userAndServer
-		} else {
-			r = thankyou
-		}
-
-		return
-	}
-
-	for {
-		conn, err := listener.Accept()
-		if err != nil {
-			fmt.Fprintln(os.Stderr, err)
-		}
-		serial, name, challenge, response, err := (*common.Dialog)(conn.(*tls.Conn)).ReceiveSend(s)
-		if err != nil {
-			fmt.Fprintln(os.Stderr, err)
-		}
-		fmt.Fprintf(os.Stderr, "%v %s %s Recv:%s Sent:%s\n", time.Now(), serial, name, common.Chomp(challenge), common.Chomp(response))
-		if string(challenge) != "REQUEST TARGET\n" {
-			fmt.Printf("%s\t%s\t%s\n", serial, name, common.Chomp(challenge))
-		}
-		conn.Close()
-	}
-	http.Handle("/request", websocket.Handler(RequestServer))
-	http.Handle("/notify", websocket.Handler(NotifyServer))
-	http.Handle("/verify", websocket.Handler(VerifyServer))
-	log.Fatalf("ListenAndServeTLS: ", http.ListenAndServeTLS(":12345", nil))
+		filepath.Join(confdir, common.Privkey),
+		nil))
 }

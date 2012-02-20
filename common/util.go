@@ -1,11 +1,10 @@
 package common
 
 import (
-	"fmt"
 	"os"
 )
 
-func exists(name string) (ok bool, mode os.FileMode, err error) {
+func Exists(name string) (ok bool, mode os.FileMode, err error) {
 	f, err := os.Open(name)
 	if err != nil {
 		if pe, ok := err.(*os.PathError); !ok {
@@ -16,7 +15,6 @@ func exists(name string) (ok bool, mode os.FileMode, err error) {
 			return false, 0, nil
 		}
 	}
-	fmt.Println(f)
 	defer f.Close()
 	fi, err := f.Stat()
 	if err != nil {

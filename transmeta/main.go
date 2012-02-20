@@ -2,22 +2,20 @@ package main
 
 import (
 	"code.google.com/p/go.net/websocket"
-	"crypto/md5"
-	"crypto/rand"
+	"crypto/tls"
+	"crypto/x509"
 	"flag"
 	"fmt"
 	"log"
+	"net/url"
 	"os"
 	"os/user"
 	"path/filepath"
 	"strings"
-	"time"
 	"transmeta/common"
 )
 
 const config = ".transmeta"
-
-var hashFunc = md5.New()
 
 var (
 	name         string
@@ -34,9 +32,6 @@ var (
 	keygen       bool
 	force        bool
 	unsafe       bool
-	network      = "tcp"
-	timeout      time.Duration
-	random       = rand.Reader
 )
 
 // TODO message only and copy only options
@@ -65,7 +60,6 @@ func init() {
 	flag.StringVar(&server, "host", "localhost", "Notification and file server.")
 	flag.StringVar(&username, "u", "", "User identity (required with keygen).")
 	flag.IntVar(&port, "port", 9001, "Over 9000.")
-	flag.DurationVar(&timeout, "timeout", 10e9, "Communication timeout.")
 	flag.BoolVar(&unsafe, "unsafe", true, "Allow connection to message server without CA.")
 	flag.BoolVar(&force, "f", false, "Force overwrite of files.")
 	flag.BoolVar(&keygen, "keygen", false, "Generate a key pair for the specified user.")
@@ -121,35 +115,45 @@ func main() {
 		os.Exit(0)
 	}
 
-	tconn, err := common.NewClient(
-		network,
-		fmt.Sprintf("%s:%d", server, port),
-		timeout,
+	origin := "http://localhost/"
+	config, err := websocket.NewConfig(origin, origin)
+	if err != nil {
+		log.Fatal(err)
+	}
+	cert, err := tls.LoadX509KeyPair(
 		filepath.Join(confdir, common.Pubkey),
-		filepath.Join(confdir, common.Privkey),
-		unsafe)
+		filepath.Join(confdir, common.Privkey))
+	if err != nil {
+		return
+	}
+	config.TlsConfig = &tls.Config{
+		Certificates:       []tls.Certificate{cert},
+		InsecureSkipVerify: unsafe,
+	}
+	config.TlsConfig.BuildNameToCertificate()
+
+	{
+		config.Location, err = url.ParseRequest(fmt.Sprintf("wss://%s:%d/request", server, port))
+		if err != nil {
+			log.Fatal(err)
+		}
+		ws, err := websocket.DialConfig(config)
+		if err != nil {
+			log.Fatal(err)
+		}
+		if err := websocket.Message.Receive(ws, &scptarget); err != nil {
+			log.Fatal(err)
+		} else {
+			fmt.Fprintln(os.Stderr, "File server is:", scptarget)
+		}
+	}
+
+	l, err := common.NewLinks(common.HashFunc, flag.Args())
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		flag.Usage()
 		os.Exit(1)
 	}
-
-	_, _, response, err := (*common.Dialog)(tconn).SendReceive([]byte("REQUEST TARGET\n"))
-	tconn.Close()
-	if err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		flag.Usage()
-		os.Exit(1)
-	}
-	scptarget = string(common.Chomp(response))
-
-	l, err := common.NewLinks(hashFunc, flag.Args())
-	if err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		flag.Usage()
-		os.Exit(1)
-	}
-
 	instructions := []string{}
 	for _, o := range l.Outputs {
 		fmt.Fprintf(os.Stderr, "Copying %q to file server...", o.OriginalName)
@@ -161,81 +165,41 @@ func main() {
 		}
 	}
 
-	n := common.NewNotification(name, category, comment, tool, version, l)
-	b, err := n.Marshal()
-	if err != nil {
-		fmt.Fprintln(os.Stderr, err)
+	{
+		n := common.NewNotification(name, category, comment, tool, version, l)
+
+		if x509Cert, err := x509.ParseCertificate(cert.Certificate[0]); err == nil {
+			n.Username, n.Serial = x509Cert.Subject.CommonName, x509Cert.SerialNumber.String()
+		}
+
+		config.Location, err = url.ParseRequest(fmt.Sprintf("wss://%s:%d/notify", server, port))
+		if err != nil {
+			log.Fatal(err)
+		}
+		ws, err := websocket.DialConfig(config)
+		if err != nil {
+			log.Fatal(err)
+		}
+		if err := websocket.JSON.Send(ws, n); err != nil {
+			log.Fatal(err)
+		}
+		var m string
+		for {
+			if err := websocket.Message.Receive(ws, &m); err != nil {
+				log.Fatal(err)
+			} else {
+				fmt.Fprintln(os.Stderr, m)
+				if m == "Thankyou." {
+					break
+				}
+			}
+		}
 	}
 
-	tconn, err = common.NewClient(
-		network,
-		fmt.Sprintf("%s:%d", server, port),
-		timeout,
-		filepath.Join(confdir, common.Pubkey),
-		filepath.Join(confdir, common.Privkey),
-		unsafe)
-	if err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		flag.Usage()
-		os.Exit(1)
-	}
-
-	_, sname, response, err := (*common.Dialog)(tconn).SendReceive(b)
-	tconn.Close()
-	if err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		flag.Usage()
-		os.Exit(1)
-	}
 	if len(instructions) > 0 {
 		fmt.Fprintln(os.Stderr, "\nSome copies failed. Complete the transfer by executing the following commands:")
 		for _, s := range instructions {
 			fmt.Fprintln(os.Stderr, s)
-		}
-	}
-	fmt.Fprintf(os.Stderr, "\n%s, %s.\n", common.Chomp(response), sname)
-
-	origin := "http://localhost/"
-	{
-		url := "ws://localhost:12345/request"
-		ws, err := websocket.Dial(url, "", origin)
-		if err != nil {
-			log.Fatal(err)
-		}
-		var m string
-		if err := websocket.Message.Receive(ws, &m); err != nil {
-			log.Fatal(err)
-		} else {
-			fmt.Println(m)
-		}
-	}
-	{
-		url := "ws://localhost:12345/notify"
-		ws, err := websocket.Dial(url, "", origin)
-		if err != nil {
-			log.Fatal(err)
-		}
-		if err := websocket.Message.Send(ws, "~JSON"); err != nil {
-			log.Fatal(err)
-		}
-		var m string
-		if err := websocket.Message.Receive(ws, &m); err != nil {
-			log.Fatal(err)
-		} else {
-			fmt.Println(m)
-		}
-	}
-	{
-		url := "ws://localhost:12345/verify"
-		ws, err := websocket.Dial(url, "", origin)
-		if err != nil {
-			log.Fatal(err)
-		}
-		var m string
-		if err := websocket.Message.Receive(ws, &m); err != nil {
-			log.Fatal(err)
-		} else {
-			fmt.Println(m)
 		}
 	}
 }

@@ -1,12 +1,15 @@
 package common
 
 import (
+	"crypto/md5"
 	"errors"
 	"fmt"
 	"hash"
 	"io"
 	"os"
 )
+
+var HashFunc = md5.New()
 
 var bufferLen = 4096
 

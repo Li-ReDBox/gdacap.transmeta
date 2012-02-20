@@ -27,7 +27,7 @@ var random = crand.Reader
 
 func createCA(key *rsa.PrivateKey, issuer string, organisation []string, isCA bool) (derBytes []byte, err error) {
 	template := x509.Certificate{
-		SerialNumber: big.NewInt(1).Mul(big.NewInt(time.Now().Unix()), big.NewInt(rand.Int63())),
+		SerialNumber: big.NewInt(1).Add(big.NewInt(1).Lsh(big.NewInt(time.Now().Unix()), 63), big.NewInt(rand.Int63())),
 		Subject: pkix.Name{
 			CommonName:   issuer,
 			Organization: organisation,
@@ -88,7 +88,7 @@ func Keygen(username string, organisation []string, isCA bool, confdir string, f
 	}
 	pemBytes := pem.EncodeToMemory(certBlock)
 
-	ok, mode, err := exists(confdir)
+	ok, mode, err := Exists(confdir)
 	if err != nil {
 		return
 	}
@@ -107,7 +107,7 @@ func Keygen(username string, organisation []string, isCA bool, confdir string, f
 	)
 
 	name = filepath.Join(confdir, Privkey)
-	if ok, _, err := exists(name); ok && !force {
+	if ok, _, err := Exists(name); ok && !force {
 		return nil, errors.New(fmt.Sprintf("File %q exists. Use -f to overwrite.", name))
 	} else if err != nil {
 		return nil, err
@@ -121,7 +121,7 @@ func Keygen(username string, organisation []string, isCA bool, confdir string, f
 	}
 
 	name = filepath.Join(confdir, Pubkey)
-	if ok, _, err := exists(name); ok && !force {
+	if ok, _, err := Exists(name); ok && !force {
 		return nil, errors.New(fmt.Sprintf("File %q exists. Use -f to overwrite.", name))
 	} else if err != nil {
 		return nil, err
