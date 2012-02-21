@@ -28,8 +28,7 @@ var (
 	username     string   // messenger admin
 	organisation []string // optional
 
-	network = "tcp"
-	laddr   = "0.0.0.0"
+	laddr   string
 	port    int
 
 	confdir string
@@ -60,6 +59,7 @@ func init() {
 	flag.StringVar(&subuser, "fuser", "", "Receiving user (required).")
 	flag.StringVar(&subpath, "fpath", "", "Path in receiving user's $HOME.")
 	flag.IntVar(&port, "port", 9001, "Over 9000.")
+	flag.StringVar(&laddr, "laddr", "0.0.0.0", "Addresses to listen to.")
 	flag.BoolVar(&force, "f", false, "Force overwrite of files.")
 	flag.BoolVar(&keygen, "keygen", false, "Generate a key pair for the specified user.")
 	help := flag.Bool("help", false, "Print this usage message.")
@@ -164,10 +164,11 @@ func main() {
 	}
 
 	server := &http.Server{
-		Addr:    fmt.Sprintf("0.0.0.0:%d", port),
+		Addr:    fmt.Sprintf("%s:%d", laddr, port),
 		Handler: nil,
 	}
 
+	// The following block can go away when http://code.google.com/p/go/source/detail?r=7a899d8d9e4e is in weekly.
 	var tlsListener net.Listener
 	{
 		config := &tls.Config{
@@ -193,8 +194,15 @@ func main() {
 		tlsListener = tls.NewListener(conn, config)
 
 	}
+	// replace with:
+	//server.TLSConfig = &tls.Config{ClientAuth: tls.RequireAnyClientCert} // TODO Actually include this in server definition.
 
 	http.Handle("/request", websocket.Handler(RequestServer))
 	http.Handle("/notify", websocket.Handler(NotificationServer))
+	// The following line can go away when http://code.google.com/p/go/source/detail?r=7a899d8d9e4e is in weekly.
 	log.Fatalf("ListenAndServeTLS: ", server.Serve(tlsListener))
+	// replace with:
+	//log.Fatalf("ListenAndServeTLS: ", server.ListenAndServe(
+	//	filepath.Join(confdir, common.Pubkey),
+	//	filepath.Join(confdir, common.Privkey)))
 }
