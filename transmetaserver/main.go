@@ -1,3 +1,20 @@
+/*
+Copyright ©2011 Dan Kortschak <dan.kortschak@adelaide.edu.au>
+
+This program is free software: you can redistribute it and/or modify
+it under the terms of the GNU General Public License as published by
+the Free Software Foundation, either version 3 of the License, or
+(at your option) any later version.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+GNU General Public License for more details.
+
+You should have received a copy of the GNU General Public License
+along with this program.  If not, see <http:www.gnu.org/licenses/>.
+*/
+
 package main
 
 import (
@@ -8,7 +25,6 @@ import (
 	"flag"
 	"fmt"
 	"log"
-	"net"
 	"net/http"
 	"os"
 	"os/user"
@@ -28,8 +44,9 @@ var (
 	username     string   // messenger admin
 	organisation []string // optional
 
-	laddr   string
-	port    int
+	laddr  string
+	port   int
+	strict bool
 
 	confdir string
 	keygen  bool
@@ -59,6 +76,7 @@ func init() {
 	flag.StringVar(&subuser, "fuser", "", "Receiving user (required).")
 	flag.StringVar(&subpath, "fpath", "", "Path in receiving user's $HOME.")
 	flag.IntVar(&port, "port", 9001, "Over 9000.")
+	flag.BoolVar(&strict, "strict", false, "Required level of authentication: false - provide cert, true - provide CA-signed cert.")
 	flag.StringVar(&laddr, "laddr", "0.0.0.0", "Addresses to listen to.")
 	flag.BoolVar(&force, "f", false, "Force overwrite of files.")
 	flag.BoolVar(&keygen, "keygen", false, "Generate a key pair for the specified user.")
@@ -163,46 +181,19 @@ func main() {
 		os.Exit(0)
 	}
 
+	clientAuth := tls.RequireAnyClientCert
+	if strict {
+		clientAuth = tls.RequireAndVerifyClientCert
+	}
 	server := &http.Server{
-		Addr:    fmt.Sprintf("%s:%d", laddr, port),
-		Handler: nil,
+		Addr:      fmt.Sprintf("%s:%d", laddr, port),
+		Handler:   nil,
+		TLSConfig: &tls.Config{ClientAuth: clientAuth},
 	}
-
-	// The following block can go away when http://code.google.com/p/go/source/detail?r=7a899d8d9e4e is in weekly.
-	var tlsListener net.Listener
-	{
-		config := &tls.Config{
-			Rand:       rand.Reader,
-			ClientAuth: tls.RequireAnyClientCert,
-			NextProtos: []string{"http/1.1"},
-		}
-
-		var err error
-		config.Certificates = make([]tls.Certificate, 1)
-		config.Certificates[0], err = tls.LoadX509KeyPair(
-			filepath.Join(confdir, common.Pubkey),
-			filepath.Join(confdir, common.Privkey))
-		if err != nil {
-			log.Fatalf("Could not load server certificates: %v", err)
-		}
-
-		conn, err := net.Listen("tcp", server.Addr)
-		if err != nil {
-			log.Fatalf("Could not create tcp connection: %v", err)
-		}
-
-		tlsListener = tls.NewListener(conn, config)
-
-	}
-	// replace with:
-	//server.TLSConfig = &tls.Config{ClientAuth: tls.RequireAnyClientCert} // TODO Actually include this in server definition.
 
 	http.Handle("/request", websocket.Handler(RequestServer))
 	http.Handle("/notify", websocket.Handler(NotificationServer))
-	// The following line can go away when http://code.google.com/p/go/source/detail?r=7a899d8d9e4e is in weekly.
-	log.Fatalf("ListenAndServeTLS: ", server.Serve(tlsListener))
-	// replace with:
-	//log.Fatalf("ListenAndServeTLS: ", server.ListenAndServe(
-	//	filepath.Join(confdir, common.Pubkey),
-	//	filepath.Join(confdir, common.Privkey)))
+	log.Fatalf("ListenAndServeTLS: ", server.ListenAndServeTLS(
+		filepath.Join(confdir, common.Pubkey),
+		filepath.Join(confdir, common.Privkey)))
 }
