@@ -19,6 +19,7 @@ package common
 
 import (
 	"os"
+	"path/filepath"
 )
 
 func Exists(name string) (ok bool, mode os.FileMode, err error) {
@@ -39,6 +40,26 @@ func Exists(name string) (ok bool, mode os.FileMode, err error) {
 	}
 
 	return true, fi.Mode(), nil
+}
+
+func Collision(name string, size int64) (exists, collision bool, err error) {
+	ok, mode, err := Exists(name)
+	if err != nil {
+		return
+	} else if !ok {
+		return false, false, nil
+	} else if mode.IsDir() {
+		return true, true, nil
+	}
+	h, s := HashFile(HashFunc, name)
+	if _, name = filepath.Split(name); h == name {
+		if s == size {
+			return true, false, nil
+		} else {
+			return true, true, nil
+		}
+	}
+	return false, false, nil
 }
 
 func Chomp(s []byte) []byte {

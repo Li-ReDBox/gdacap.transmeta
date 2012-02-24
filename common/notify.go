@@ -53,19 +53,21 @@ func NewLinks(h hash.Hash, args []string) (l *Links, err error) {
 					return
 				}
 				_, n := filepath.Split(so[0])
-				h := HashFile(l.Hash, so[0])
+				h, size := HashFile(l.Hash, so[0])
 				l.Outputs = append(l.Outputs, Output{
 					OriginalName: n,
 					FullPath:     so[0],
 					Hash:         h,
 					Type:         so[1],
+					Size:         &size,
 				})
 			} else {
 				if len(strings.Split(args[i], ",")) != 1 {
 					err = errors.New(fmt.Sprintf("Bad inputfile: %q\n", args[i]))
 				}
+				h, _ := HashFile(l.Hash, args[i])
 				l.Inputs = append(l.Inputs, Input{
-					Hash: HashFile(l.Hash, args[i]),
+					Hash: h,
 				})
 			}
 		}
@@ -103,6 +105,8 @@ type Output struct {
 	FullPath     string `json:"-"`
 	Hash         string
 	Type         string
+	Sent         *bool  `json:",omitempty"`
+	Size         *int64 `json:",omitempty"`
 }
 
 func NewNotification(name, category, comment, tool, version string, l *Links) *Notification {

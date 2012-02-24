@@ -21,9 +21,11 @@ import (
 	"code.google.com/p/go.net/websocket"
 	"crypto/rand"
 	"crypto/tls"
+	"crypto/x509"
 	"encoding/json"
 	"flag"
 	"fmt"
+	"io/ioutil"
 	"log"
 	"net/http"
 	"os"
@@ -33,12 +35,16 @@ import (
 	"transmeta/common"
 )
 
-const config = ".transmetaserver"
+const (
+	config   = ".transmetaserver"
+	certfile = "authority.pem"
+)
 
 var (
 	server        string // host receiving files by scp
 	subuser       string // user on the server accepting file submission
 	subpath       string // path in ~subuser for copy
+	targetdir     string
 	userAndServer string
 
 	username     string   // messenger admin
@@ -92,6 +98,12 @@ func init() {
 	requiredFlags()
 
 	userAndServer = fmt.Sprintf("%s@%s:~%s/", subuser, server, filepath.Join(subuser, subpath))
+	if u, err := user.Lookup(subuser); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(0)
+	} else {
+		targetdir = u.HomeDir
+	}
 }
 
 func requiredFlags() {
@@ -119,7 +131,42 @@ func requiredFlags() {
 }
 
 func RequestServer(ws *websocket.Conn) {
+	var (
+		m     string
+		files []common.Output
+	)
+
+	if err := websocket.Message.Receive(ws, &m); err != nil {
+		log.Fatalf("Websocket fault: err", err)
+	}
+	if err := json.Unmarshal([]byte(m), &files); err != nil {
+		websocket.Message.Send(ws, "bad message - could not parse")
+		log.Fatalf("Bad message: malformed JSON %q: %v.", m, err)
+		goto bye
+	}
+	for i, f := range files {
+		if f.Size == nil {
+			continue
+		}
+		if exists, collision, err := common.Collision(filepath.Join(targetdir, f.Hash), *f.Size); err != nil {
+			websocket.Message.Send(ws, fmt.Sprintf("Server fault: %v.", err))
+		} else {
+			if collision {
+				continue // Don't set Sent status - indicates collision
+			} else {
+				files[i].Sent = new(bool)
+				*files[i].Sent = exists
+			}
+		}
+	}
+	if err := websocket.JSON.Send(ws, files); err != nil {
+		log.Fatal(err)
+	}
+
 	websocket.Message.Send(ws, userAndServer)
+
+bye:
+	websocket.Message.Send(ws, "Thankyou.")
 }
 
 func NotificationServer(ws *websocket.Conn) {
@@ -128,7 +175,9 @@ func NotificationServer(ws *websocket.Conn) {
 		note common.Notification
 	)
 
-	websocket.Message.Receive(ws, &m)
+	if err := websocket.Message.Receive(ws, &m); err != nil {
+		log.Fatalf("Websocket fault: err", err)
+	}
 	if err := json.Unmarshal([]byte(m), &note); err != nil {
 		websocket.Message.Send(ws, "bad message - could not parse")
 		log.Printf("Bad message: malformed JSON %q: %v.", m, err)
@@ -144,15 +193,22 @@ func NotificationServer(ws *websocket.Conn) {
 		note.Serial, note.Username = cert.SerialNumber.String(), cert.Subject.CommonName
 	}
 
-	for _, file := range note.Output {
-		fp := filepath.Join("/home", subuser, subpath, file.Hash)
+	for i, file := range note.Output {
+		fp := filepath.Join(targetdir, subpath, file.Hash)
+		if file.Sent == nil { // Protect against malformed notification - Sent == nil would panic.
+			continue
+		}
+		var sent bool
+		if sent, note.Output[i].Sent = *file.Sent, nil; !sent {
+			continue
+		}
 		if ok, _, err := common.Exists(fp); err != nil {
 			websocket.Message.Send(ws, fmt.Sprintf("Server fault: %v.", err))
 			log.Printf("Server fault: %v", err)
 		} else if !ok {
-			websocket.Message.Send(ws, fmt.Sprintf("%q is not on the server at %q.", file.OriginalName, fp))
+			websocket.Message.Send(ws, fmt.Sprintf("%q is not on the server at %q.", file.OriginalName, filepath.Join("...", file.Hash)))
 		} else {
-			if hs := common.HashFile(common.HashFunc, fp); hs != file.Hash {
+			if hs, _ := common.HashFile(common.HashFunc, fp); hs != file.Hash {
 				websocket.Message.Send(ws, fmt.Sprintf("%q did not verify correctly: %s != %s.", file.OriginalName, hs, file.Hash))
 			} else {
 				websocket.Message.Send(ws, fmt.Sprintf("%q verified correctly.", file.OriginalName))
@@ -181,14 +237,24 @@ func main() {
 		os.Exit(0)
 	}
 
-	clientAuth := tls.RequireAnyClientCert
-	if strict {
-		clientAuth = tls.RequireAndVerifyClientCert
-	}
 	server := &http.Server{
 		Addr:      fmt.Sprintf("%s:%d", laddr, port),
 		Handler:   nil,
-		TLSConfig: &tls.Config{ClientAuth: clientAuth},
+		TLSConfig: &tls.Config{ClientAuth: tls.RequireAnyClientCert},
+	}
+	if strict {
+		server.TLSConfig.ClientAuth = tls.RequireAndVerifyClientCert
+		certpath := filepath.Join(confdir, certfile)
+		if certs, err := ioutil.ReadFile(certpath); err != nil {
+			log.Fatalf("Could not read certs file %q: %v.", certpath, err)
+		} else {
+			pool := x509.NewCertPool()
+			if !pool.AppendCertsFromPEM(certs) {
+				log.Fatalf("No certs added from %q.", certpath)
+			}
+			log.Printf("Added %d certs from %q.", len(pool.Subjects()), certpath)
+			server.TLSConfig.ClientCAs = pool
+		}
 	}
 
 	http.Handle("/request", websocket.Handler(RequestServer))

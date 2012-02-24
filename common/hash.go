@@ -23,6 +23,7 @@ import (
 	"fmt"
 	"hash"
 	"io"
+	"log"
 	"os"
 )
 
@@ -30,15 +31,18 @@ var HashFunc = md5.New()
 
 var bufferLen = 4096
 
-func HashFile(h hash.Hash, name string) (s string) {
+func HashFile(h hash.Hash, name string) (s string, size int64) {
 	if f, err := os.Open(name); err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		os.Exit(1)
+		log.Fatalf("Error: %v\n", err)
 	} else if sum, err := Hash(h, f); err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		os.Exit(1)
+		log.Fatalf("Error: %v\n", err)
 	} else {
 		s = fmt.Sprintf("%x", sum)
+		fi, err := f.Stat()
+		if err != nil {
+			log.Fatalf("Error: %v\n", err)
+		}
+		size = fi.Size()
 	}
 
 	return

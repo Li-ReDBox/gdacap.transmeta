@@ -20,6 +20,7 @@ package main
 import (
 	"code.google.com/p/go.net/websocket"
 	"crypto/tls"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"log"
@@ -32,6 +33,12 @@ import (
 )
 
 const config = ".transmeta"
+
+const (
+	never = iota
+	whenRequired
+	always
+)
 
 var (
 	name         string
@@ -47,15 +54,13 @@ var (
 	confdir      string
 	keygen       bool
 	force        bool
+	send, verify int
 	unsafe       bool
 )
 
-// TODO message only and copy only options
-
 func init() {
 	if u, err := user.Current(); err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		os.Exit(0)
+		log.Fatalln(err)
 	} else {
 		confdir = filepath.Join(u.HomeDir, config)
 	}
@@ -76,6 +81,8 @@ func init() {
 	flag.StringVar(&server, "host", "localhost", "Notification and file server.")
 	flag.StringVar(&username, "u", "", "User identity (required with keygen).")
 	flag.IntVar(&port, "port", 9001, "Over 9000.")
+	flag.IntVar(&send, "send", 1, "When to send: 0 - never, 1 - if not on server, 2 - always.")
+	flag.IntVar(&verify, "verify", 1, "When to verify: 0 - never, 1 - if sent successfully, 2 - always.")
 	flag.BoolVar(&unsafe, "unsafe", true, "Allow connection to message server without CA.")
 	flag.BoolVar(&force, "f", false, "Force overwrite of files.")
 	flag.BoolVar(&keygen, "keygen", false, "Generate a key pair for the specified user.")
@@ -119,6 +126,22 @@ func requiredFlags() {
 		flag.Usage()
 		os.Exit(1)
 	}
+	failed = failed[:0]
+	if send < never || send > always {
+		fmt.Println(send, never, always, whenRequired)
+		fmt.Println(send < never, send > always, send == whenRequired)
+		failed = append(failed, fmt.Sprintf(" 'send': %v.", send))
+	}
+	if verify < never || verify > always {
+		fmt.Println(verify, never, always)
+		fmt.Println(verify < never, verify > always)
+		failed = append(failed, fmt.Sprintf(" 'verify': %v.", verify))
+	}
+	if len(failed) > 0 {
+		fmt.Fprintf(os.Stderr, "Illegal parameter values:\n%s\n", strings.Join(failed, "\n"))
+		flag.Usage()
+		os.Exit(1)
+	}
 }
 
 func main() {
@@ -148,7 +171,14 @@ func main() {
 	}
 	config.TlsConfig.BuildNameToCertificate()
 
-	{
+	l, err := common.NewLinks(common.HashFunc, flag.Args())
+	if err != nil {
+		log.Println(err)
+		flag.Usage()
+		os.Exit(1)
+	}
+
+	if send != never {
 		config.Location, err = url.ParseRequestURI(fmt.Sprintf("wss://%s:%d/request", server, port))
 		if err != nil {
 			log.Fatal(err)
@@ -157,27 +187,53 @@ func main() {
 		if err != nil {
 			log.Fatal(err)
 		}
+		if err := websocket.JSON.Send(ws, l.Outputs); err != nil {
+			log.Fatal(err)
+		}
+		var m string
+		if err := websocket.Message.Receive(ws, &m); err != nil {
+			log.Fatal(err)
+		} else if m == "Thankyou." {
+			goto bye
+		} else {
+			if err = json.Unmarshal([]byte(m), &l.Outputs); err != nil {
+				log.Fatal("Bad message: malformed JSON %q: %v.", m, err)
+			}
+		}
+
 		if err := websocket.Message.Receive(ws, &scptarget); err != nil {
 			log.Fatal(err)
-		} else {
-			fmt.Fprintln(os.Stderr, "File server is:", scptarget)
 		}
 	}
-
-	l, err := common.NewLinks(common.HashFunc, flag.Args())
-	if err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		flag.Usage()
-		os.Exit(1)
+bye:
+	if scptarget == "" && send > never {
+		log.Fatal("Could not get file server identity.")
 	}
+
 	instructions := []string{}
-	for _, o := range l.Outputs {
-		fmt.Fprintf(os.Stderr, "Copying %q to file server...", o.OriginalName)
-		if err := common.SecureCopy(o.FullPath, scptarget+o.Hash); err != nil {
-			fmt.Fprintln(os.Stderr, " failed.")
-			instructions = append(instructions, fmt.Sprintf("scp %s %s%s", o.FullPath, scptarget, o.Hash))
+	for i, o := range l.Outputs {
+		if o.Sent == nil {
+			if send > never {
+				log.Println("File collision. Refusing to send. Please de-collision and try again.")
+			}
+			if verify == always {
+				l.Outputs[i].Sent = new(bool)
+				*l.Outputs[i].Sent = true
+			}
+			continue
+		}
+		if send == always || (!*o.Sent && send > never) {
+			log.Printf("Copying %q to file server...", o.OriginalName)
+			if err := common.SecureCopy(o.FullPath, scptarget+o.Hash); err != nil {
+				log.Printf("Copy %q failed.", o.OriginalName)
+				instructions = append(instructions, fmt.Sprintf(" scp %s %s%s", o.FullPath, scptarget, o.Hash))
+				*l.Outputs[i].Sent = verify == always
+			} else {
+				log.Printf("Copy %q ok.", o.OriginalName)
+				*l.Outputs[i].Sent = true && verify != never
+			}
 		} else {
-			fmt.Fprintln(os.Stderr, " ok.")
+			*l.Outputs[i].Sent = verify == always
 		}
 	}
 
@@ -199,7 +255,7 @@ func main() {
 			if err := websocket.Message.Receive(ws, &m); err != nil {
 				log.Fatal(err)
 			} else {
-				fmt.Fprintln(os.Stderr, m)
+				log.Println(m)
 				if m == "Thankyou." {
 					break
 				}
@@ -208,9 +264,9 @@ func main() {
 	}
 
 	if len(instructions) > 0 {
-		fmt.Fprintln(os.Stderr, "\nSome copies failed. Complete the transfer by executing the following commands:")
+		log.Println("Some copies failed. Complete the transfer by executing the following commands:")
 		for _, s := range instructions {
-			fmt.Fprintln(os.Stderr, s)
+			log.Println(s)
 		}
 	}
 }
