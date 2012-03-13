@@ -71,7 +71,7 @@ func init() {
 
 	flag.Usage = func() {
 		fmt.Fprintf(os.Stderr, "Usage of %s:\n\n", os.Args[0])
-		fmt.Fprintf(os.Stderr, " %s -fhost <scp target> -fuser <scp target user> [-fpath <scp target path>] > \"serial\\tusername\\tJSON\"\n", os.Args[0])
+		fmt.Fprintf(os.Stderr, " %s -fhost <scp target> -fuser <scp target user> [-fpath <scp target path>] > <JSON>\n", os.Args[0])
 		fmt.Fprintf(os.Stderr, " %s -keygen -u <user>\n", os.Args[0])
 		fmt.Fprintln(os.Stderr)
 		flag.PrintDefaults()
