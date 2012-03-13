@@ -97,6 +97,10 @@ func init() {
 
 	requiredFlags()
 
+	if keygen {
+		return
+	}
+
 	userAndServer = fmt.Sprintf("%s@%s:~%s/", subuser, server, filepath.Join(subuser, subpath))
 	if u, err := user.Lookup(subuser); err != nil {
 		fmt.Fprintln(os.Stderr, err)
