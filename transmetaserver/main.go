@@ -64,7 +64,7 @@ var (
 func init() {
 	if u, err := user.Current(); err != nil {
 		fmt.Fprintln(os.Stderr, err)
-		os.Exit(0)
+		os.Exit(1)
 	} else {
 		confdir = filepath.Join(u.HomeDir, config)
 	}
@@ -103,10 +103,10 @@ func init() {
 
 	userAndServer = fmt.Sprintf("%s@%s:~%s/", subuser, server, filepath.Join(subuser, subpath))
 	if u, err := user.Lookup(subuser); err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		os.Exit(0)
+		fmt.Fprintf(os.Stderr, "Could not get user: %s, %v", subuser, err)
+		os.Exit(1)
 	} else {
-		targetdir = u.HomeDir
+		targetdir = filepath.Join(u.HomeDir, subpath)
 	}
 }
 
@@ -115,7 +115,7 @@ func requiredFlags() {
 		if username == "" {
 			fmt.Fprintln(os.Stderr, "Missing required 'u' flag.")
 			flag.Usage()
-			os.Exit(0)
+			os.Exit(1)
 		}
 		return
 	}

@@ -163,7 +163,8 @@ func main() {
 		filepath.Join(confdir, common.Pubkey),
 		filepath.Join(confdir, common.Privkey))
 	if err != nil {
-		return
+		fmt.Fprintf(os.Stderr, "Could not read certs files from %q: %v", confdir, err)
+		os.Exit(1)
 	}
 	config.TlsConfig = &tls.Config{
 		Certificates:       []tls.Certificate{cert},
