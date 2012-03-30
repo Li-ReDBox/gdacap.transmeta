@@ -144,7 +144,7 @@ func RequestServer(ws *websocket.Conn) {
 		log.Fatalf("Websocket fault: err", err)
 	}
 	if err := json.Unmarshal([]byte(m), &files); err != nil {
-		websocket.Message.Send(ws, "bad message - could not parse")
+		websocket.Message.Send(ws, "Error: bad message - could not parse")
 		log.Fatalf("Bad message: malformed JSON %q: %v.", m, err)
 		goto bye
 	}
@@ -153,7 +153,7 @@ func RequestServer(ws *websocket.Conn) {
 			continue
 		}
 		if exists, collision, err := common.Collision(filepath.Join(targetdir, f.Hash), *f.Size); err != nil {
-			websocket.Message.Send(ws, fmt.Sprintf("Server fault: %v.", err))
+			websocket.Message.Send(ws, fmt.Sprintf("Error: Server fault: %v.", err))
 		} else {
 			if collision {
 				continue // Don't set Sent status - indicates collision
@@ -198,7 +198,7 @@ func NotificationServer(ws *websocket.Conn) {
 	}
 
 	for i, file := range note.Output {
-		fp := filepath.Join(targetdir, subpath, file.Hash)
+		fp := filepath.Join(targetdir, file.Hash)
 		if file.Sent == nil { // Protect against malformed notification - Sent == nil would panic.
 			continue
 		}

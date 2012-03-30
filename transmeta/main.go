@@ -42,6 +42,7 @@ const (
 
 var (
 	name         string
+	project      string
 	category     string
 	comment      string
 	tool         string
@@ -74,6 +75,7 @@ func init() {
 		fmt.Fprintln(os.Stderr)
 	}
 	flag.StringVar(&name, "n", "", "Meaningful name of the process being submitted (required).")
+	flag.StringVar(&project, "p", "", "Name of project being submitted to.")
 	flag.StringVar(&category, "cat", "", "Agreed process category type (required).")
 	flag.StringVar(&comment, "comment", "", "Free text.")
 	flag.StringVar(&tool, "tool", "", "Process executable name (required).")
@@ -196,9 +198,11 @@ func main() {
 			log.Fatal(err)
 		} else if m == "Thankyou." {
 			goto bye
+		} else if m[:5] == "Error" {
+			log.Fatal(m)
 		} else {
 			if err = json.Unmarshal([]byte(m), &l.Outputs); err != nil {
-				log.Fatal("Bad message: malformed JSON %q: %v.", m, err)
+				log.Fatalf("Bad message: malformed JSON %q: %v.", m, err)
 			}
 		}
 
@@ -239,7 +243,7 @@ bye:
 	}
 
 	{
-		n := common.NewNotification(name, category, comment, tool, version, l)
+		n := common.NewNotification(name, project, category, comment, tool, version, l)
 		config.Location, err = url.ParseRequestURI(fmt.Sprintf("wss://%s:%d/notify", server, port))
 		if err != nil {
 			log.Fatal(err)

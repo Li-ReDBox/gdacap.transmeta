@@ -81,14 +81,15 @@ func NewLinks(h hash.Hash, args []string) (l *Links, err error) {
 }
 
 type Notification struct {
-	Username string `json:",omitempty"`
-	Serial   string `json:",omitempty"`
-	Name     string
-	Category string
-	Comment  *string `json:",omitempty"`
-	Tool     Tool
-	Input    []Input `json:",omitempty"`
-	Output   []Output
+	Username     string `json:",omitempty"`
+	Serial       string `json:",omitempty"`
+	ProjectAlias string `json:",omitempty"`
+	Name         string
+	Category     string
+	Comment      *string `json:",omitempty"`
+	Tool         Tool
+	Input        []Input `json:",omitempty"`
+	Output       []Output
 }
 
 type Tool struct {
@@ -109,11 +110,12 @@ type Output struct {
 	Size         *int64 `json:",omitempty"`
 }
 
-func NewNotification(name, category, comment, tool, version string, l *Links) *Notification {
+func NewNotification(name, project, category, comment, tool, version string, l *Links) *Notification {
 	return &Notification{
-		Name:     name,
-		Category: category,
-		Comment:  pointer(comment),
+		Name:         name,
+		ProjectAlias: project,
+		Category:     category,
+		Comment:      pointer(comment),
 		Tool: Tool{
 			Name:    tool,
 			Version: version,
