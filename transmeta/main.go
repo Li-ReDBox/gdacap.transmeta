@@ -18,11 +18,14 @@ along with this program.  If not, see <http:www.gnu.org/licenses/>.
 package main
 
 import (
+	"bufio"
 	"code.google.com/p/go.net/websocket"
 	"crypto/tls"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"log"
 	"net/url"
 	"os"
@@ -41,22 +44,31 @@ const (
 )
 
 var (
-	name         string
-	project      string
-	category     string
-	comment      string
-	tool         string
-	version      string
-	server       string
-	port         int
-	scptarget    string
-	username     string
+	name     string
+	project  string
+	category string
+	comment  string
+	tool     string
+	version  string
+
+	batch string
+	lock  string
+
+	server string
+	port   int
+
+	scptarget string
+	username  string
+
 	organisation []string
 	confdir      string
 	keygen       bool
 	force        bool
+
 	send, verify int
 	unsafe       bool
+
+	help bool
 )
 
 func init() {
@@ -69,17 +81,20 @@ func init() {
 	flag.Usage = func() {
 		fmt.Fprintf(os.Stderr, "Usage of %s:\n\n", os.Args[0])
 		fmt.Fprintf(os.Stderr, " %s -n <name> -cat <category> -tool <tool> -v <version> -- [-i <inputfiles>... -o ] <outputfiles,type>...\n", os.Args[0])
+		fmt.Fprintf(os.Stderr, " %s -batch <batch-file> -lock <lock-file>\n", os.Args[0])
 		fmt.Fprintf(os.Stderr, " %s -keygen -u <user>\n", os.Args[0])
 		fmt.Fprintln(os.Stderr)
 		flag.PrintDefaults()
 		fmt.Fprintln(os.Stderr)
 	}
-	flag.StringVar(&name, "n", "", "Meaningful name of the process being submitted (required).")
+	flag.StringVar(&name, "n", "", "Meaningful name of the process being submitted (required unless in batch mode).")
 	flag.StringVar(&project, "p", "", "Name of project being submitted to.")
-	flag.StringVar(&category, "cat", "", "Agreed process category type (required).")
+	flag.StringVar(&category, "cat", "", "Agreed process category type (required unless in batch mode).")
 	flag.StringVar(&comment, "comment", "", "Free text.")
-	flag.StringVar(&tool, "tool", "", "Process executable name (required).")
-	flag.StringVar(&version, "v", "", "Process executable version (required).")
+	flag.StringVar(&tool, "tool", "", "Process executable name (required unless in batch mode).")
+	flag.StringVar(&version, "v", "", "Process executable version (required unless in batch mode).")
+	flag.StringVar(&batch, "batch", "", "Process executable version.")
+	flag.StringVar(&lock, "lock", "", "Lock to wait on.")
 	flag.StringVar(&server, "host", "localhost", "Notification and file server.")
 	flag.StringVar(&username, "u", "", "User identity (required with keygen).")
 	flag.IntVar(&port, "port", 9001, "Over 9000.")
@@ -88,16 +103,7 @@ func init() {
 	flag.BoolVar(&unsafe, "unsafe", true, "Allow connection to message server without CA.")
 	flag.BoolVar(&force, "f", false, "Force overwrite of files.")
 	flag.BoolVar(&keygen, "keygen", false, "Generate a key pair for the specified user.")
-	help := flag.Bool("help", false, "Print this usage message.")
-
-	flag.Parse()
-
-	if *help {
-		flag.Usage()
-		os.Exit(0)
-	}
-
-	requiredFlags()
+	flag.BoolVar(&help, "help", false, "Print this usage message.")
 }
 
 func requiredFlags() {
@@ -109,6 +115,19 @@ func requiredFlags() {
 		}
 		return
 	}
+
+	if batch != "" {
+		if lock != "" {
+			if exists, _, err := common.Exists(lock); err != nil {
+				log.Fatalf("Error: %v", err)
+			} else if !exists {
+				log.Fatalf("Lock file %q specified, but does not exist.", lock)
+			}
+		}
+		return
+	}
+
+	lock = ""
 
 	failed := []string{}
 	if name == "" {
@@ -146,7 +165,112 @@ func requiredFlags() {
 	}
 }
 
+func Send(send int, l *common.Links, config *websocket.Config) (ins []string, err error) {
+	var scptarget string
+	if send != never {
+		config.Location, err = url.ParseRequestURI(fmt.Sprintf("wss://%s:%d/request", server, port))
+		if err != nil {
+			log.Fatal(err)
+		}
+		var ws *websocket.Conn
+		ws, err = websocket.DialConfig(config)
+		if err != nil {
+			log.Fatal(err)
+		}
+		if err := websocket.JSON.Send(ws, l.Outputs); err != nil {
+			log.Fatal(err)
+		}
+		var m string
+		if err = websocket.Message.Receive(ws, &m); err != nil {
+			log.Fatal(err)
+		} else if m == "Thankyou." {
+			goto bye
+		} else if m[:5] == "Error" {
+			log.Fatal(m)
+		} else {
+			if err = json.Unmarshal([]byte(m), &l.Outputs); err != nil {
+				err = errors.New(fmt.Sprintf("Bad message: malformed JSON %q: %v.", m, err))
+				return
+			}
+		}
+
+		if err := websocket.Message.Receive(ws, &scptarget); err != nil {
+			log.Fatal(err)
+		}
+	}
+bye:
+	if scptarget == "" && send > never {
+		errors.New("Could not get file server identity.")
+	}
+
+	for i, o := range l.Outputs {
+		if o.Sent == nil {
+			if send > never {
+				log.Println("File collision. Refusing to send. Please de-collision and try again.")
+			}
+			if verify == always {
+				l.Outputs[i].Sent = new(bool)
+				*l.Outputs[i].Sent = true
+			}
+			continue
+		}
+		if send == always || (!*o.Sent && send > never) {
+			log.Printf("Copying %q to file server...", o.OriginalName)
+			if err := common.SecureCopy(o.FullPath, scptarget+o.Hash); err != nil {
+				log.Printf("Copy %q failed.", o.OriginalName)
+				ins = append(ins, fmt.Sprintf(" scp %s %s%s", o.FullPath, scptarget, o.Hash))
+				*l.Outputs[i].Sent = verify == always
+			} else {
+				log.Printf("Copy %q ok.", o.OriginalName)
+				*l.Outputs[i].Sent = true && verify != never
+			}
+		} else {
+			*l.Outputs[i].Sent = verify == always
+		}
+	}
+
+	return
+}
+
+func Notify(name, project, category, comment, tool string, l *common.Links, config *websocket.Config) (err error) {
+	n := common.NewNotification(name, project, category, comment, tool, version, l)
+	config.Location, err = url.ParseRequestURI(fmt.Sprintf("wss://%s:%d/notify", server, port))
+	if err != nil {
+		return
+	}
+	var ws *websocket.Conn
+	ws, err = websocket.DialConfig(config)
+	if err != nil {
+		return
+	}
+	if err = websocket.JSON.Send(ws, n); err != nil {
+		return
+	}
+	var m string
+	for {
+		if err = websocket.Message.Receive(ws, &m); err != nil {
+			return
+		} else {
+			log.Println(m)
+			if m == "Thankyou." {
+				break
+			}
+		}
+	}
+
+	return
+}
+
 func main() {
+	flag.Parse()
+
+	if help {
+		flag.Usage()
+		os.Exit(0)
+	}
+
+	requiredFlags()
+
 	if keygen {
 		if serial, err := common.Keygen(username, organisation, true, confdir, force); err != nil {
 			fmt.Fprintln(os.Stderr, err)
@@ -174,103 +298,98 @@ func main() {
 	}
 	config.TlsConfig.BuildNameToCertificate()
 
-	l, err := common.NewLinks(common.HashFunc, flag.Args())
-	if err != nil {
-		log.Println(err)
-		flag.Usage()
-		os.Exit(1)
-	}
-
-	if send != never {
-		config.Location, err = url.ParseRequestURI(fmt.Sprintf("wss://%s:%d/request", server, port))
-		if err != nil {
-			log.Fatal(err)
-		}
-		ws, err := websocket.DialConfig(config)
-		if err != nil {
-			log.Fatal(err)
-		}
-		if err := websocket.JSON.Send(ws, l.Outputs); err != nil {
-			log.Fatal(err)
-		}
-		var m string
-		if err := websocket.Message.Receive(ws, &m); err != nil {
-			log.Fatal(err)
-		} else if m == "Thankyou." {
-			goto bye
-		} else if m[:5] == "Error" {
-			log.Fatal(m)
-		} else {
-			if err = json.Unmarshal([]byte(m), &l.Outputs); err != nil {
-				log.Fatalf("Bad message: malformed JSON %q: %v.", m, err)
-			}
-		}
-
-		if err := websocket.Message.Receive(ws, &scptarget); err != nil {
-			log.Fatal(err)
-		}
-	}
-bye:
-	if scptarget == "" && send > never {
-		log.Fatal("Could not get file server identity.")
-	}
-
-	instructions := []string{}
-	for i, o := range l.Outputs {
-		if o.Sent == nil {
-			if send > never {
-				log.Println("File collision. Refusing to send. Please de-collision and try again.")
-			}
-			if verify == always {
-				l.Outputs[i].Sent = new(bool)
-				*l.Outputs[i].Sent = true
-			}
-			continue
-		}
-		if send == always || (!*o.Sent && send > never) {
-			log.Printf("Copying %q to file server...", o.OriginalName)
-			if err := common.SecureCopy(o.FullPath, scptarget+o.Hash); err != nil {
-				log.Printf("Copy %q failed.", o.OriginalName)
-				instructions = append(instructions, fmt.Sprintf(" scp %s %s%s", o.FullPath, scptarget, o.Hash))
-				*l.Outputs[i].Sent = verify == always
-			} else {
-				log.Printf("Copy %q ok.", o.OriginalName)
-				*l.Outputs[i].Sent = true && verify != never
-			}
-		} else {
-			*l.Outputs[i].Sent = verify == always
+	if lock != "" {
+		if err := common.Wait(lock); err != nil {
+			log.Fatalf("Locking error: %v", err)
 		}
 	}
 
-	{
-		n := common.NewNotification(name, project, category, comment, tool, version, l)
-		config.Location, err = url.ParseRequestURI(fmt.Sprintf("wss://%s:%d/notify", server, port))
+	var instruct []string
+
+	if batch != "" {
+
+		f, err := os.Open(batch)
 		if err != nil {
-			log.Fatal(err)
+			log.Println(err)
+			flag.Usage()
+			os.Exit(1)
 		}
-		ws, err := websocket.DialConfig(config)
-		if err != nil {
-			log.Fatal(err)
-		}
-		if err := websocket.JSON.Send(ws, n); err != nil {
-			log.Fatal(err)
-		}
-		var m string
+		r := bufio.NewReader(f)
+
+		var line []byte
 		for {
-			if err := websocket.Message.Receive(ws, &m); err != nil {
+			buff, isPrefix, err := r.ReadLine()
+			if err != nil && err != io.EOF {
 				log.Fatal(err)
-			} else {
-				log.Println(m)
-				if m == "Thankyou." {
-					break
-				}
 			}
+			if err == io.EOF {
+				break
+			}
+			if isPrefix {
+				line = append(line, buff...)
+				continue
+			} else {
+				line = buff
+			}
+
+			bf := flag.NewFlagSet("batch", flag.ExitOnError)
+			bf.StringVar(&name, "n", "", "")
+			bf.StringVar(&project, "p", "", "")
+			bf.StringVar(&category, "cat", "", "")
+			bf.StringVar(&comment, "comment", "", "")
+			bf.StringVar(&tool, "tool", "", "")
+			bf.StringVar(&version, "v", "", "")
+			fields := strings.Fields(string(line))
+			err = bf.Parse(fields)
+			if err != nil {
+				log.Print(err)
+				line = line[:0]
+				continue
+			}
+
+			l, err := common.NewLinks(common.HashFunc, bf.Args())
+			if err != nil {
+				log.Print(err)
+				line = line[:0]
+				continue
+			}
+			ins, err := Send(send, l, config)
+			if err != nil {
+				log.Print(err)
+				line = line[:0]
+				continue
+			}
+			instruct = append(instruct, ins...)
+
+			err = Notify(name, project, category, comment, tool, l, config)
+			if err != nil {
+				log.Print(err)
+				line = line[:0]
+				continue
+			}
+		}
+	} else {
+		l, err := common.NewLinks(common.HashFunc, flag.Args())
+		if err != nil {
+			log.Println(err)
+			flag.Usage()
+			os.Exit(1)
+		}
+		ins, err := Send(send, l, config)
+		if err != nil {
+			log.Fatal(err)
+		}
+		instruct = append(instruct, ins...)
+
+		err = Notify(name, project, category, comment, tool, l, config)
+		if err != nil {
+			log.Fatal(err)
 		}
 	}
 
-	if len(instructions) > 0 {
+	if len(instruct) > 0 {
 		log.Println("Some copies failed. Complete the transfer by executing the following commands:")
-		for _, s := range instructions {
+		for _, s := range instruct {
 			log.Println(s)
 		}
 	}
