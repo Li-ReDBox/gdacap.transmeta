@@ -32,6 +32,7 @@ import (
 	"os/user"
 	"path/filepath"
 	"strings"
+	"time"
 	"transmeta/common"
 )
 
@@ -49,6 +50,7 @@ var (
 	category string
 	comment  string
 	tool     string
+	runtime  time.Duration
 	version  string
 
 	batch string
@@ -92,6 +94,7 @@ func init() {
 	flag.StringVar(&category, "cat", "", "Agreed process category type (required unless in batch mode).")
 	flag.StringVar(&comment, "comment", "", "Free text.")
 	flag.StringVar(&tool, "tool", "", "Process executable name (required unless in batch mode).")
+	flag.DurationVar(&runtime, "", 0, "Execution wall time.")
 	flag.StringVar(&version, "v", "", "Process executable version (required unless in batch mode).")
 	flag.StringVar(&batch, "batch", "", "Process executable version.")
 	flag.StringVar(&lock, "lock", "", "Lock to wait on.")
@@ -232,8 +235,8 @@ bye:
 	return
 }
 
-func Notify(name, project, category, comment, tool string, l *common.Links, config *websocket.Config) (err error) {
-	n := common.NewNotification(name, project, category, comment, tool, version, l)
+func Notify(name, project, category, comment, tool string, runtime time.Duration, l *common.Links, config *websocket.Config) (err error) {
+	n := common.NewNotification(name, project, category, comment, tool, version, runtime, l)
 	config.Location, err = url.ParseRequestURI(fmt.Sprintf("wss://%s:%d/notify", server, port))
 	if err != nil {
 		return
@@ -338,6 +341,7 @@ func main() {
 			bf.StringVar(&category, "cat", "", "")
 			bf.StringVar(&comment, "comment", "", "")
 			bf.StringVar(&tool, "tool", "", "")
+			bf.DurationVar(&runtime, "time", 0, "")
 			bf.StringVar(&version, "v", "", "")
 			fields := strings.Fields(string(line))
 			err = bf.Parse(fields)
@@ -361,7 +365,7 @@ func main() {
 			}
 			instruct = append(instruct, ins...)
 
-			err = Notify(name, project, category, comment, tool, l, config)
+			err = Notify(name, project, category, comment, tool, runtime, l, config)
 			if err != nil {
 				log.Print(err)
 				line = line[:0]
@@ -381,7 +385,7 @@ func main() {
 		}
 		instruct = append(instruct, ins...)
 
-		err = Notify(name, project, category, comment, tool, l, config)
+		err = Notify(name, project, category, comment, tool, runtime, l, config)
 		if err != nil {
 			log.Fatal(err)
 		}

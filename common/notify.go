@@ -24,6 +24,7 @@ import (
 	"hash"
 	"path/filepath"
 	"strings"
+	"time"
 )
 
 type Links struct {
@@ -81,15 +82,18 @@ func NewLinks(h hash.Hash, args []string) (l *Links, err error) {
 }
 
 type Notification struct {
-	Username     string `json:",omitempty"`
-	Serial       string `json:",omitempty"`
+	Username string `json:",omitempty"`
+	Serial   string `json:",omitempty"`
+
 	ProjectAlias string `json:",omitempty"`
 	Name         string
 	Category     string
 	Comment      *string `json:",omitempty"`
 	Tool         Tool
-	Input        []Input `json:",omitempty"`
-	Output       []Output
+	Runtime      time.Duration `json:",omitempty"`
+
+	Input  []Input `json:",omitempty"`
+	Output []Output
 }
 
 type Tool struct {
@@ -110,7 +114,7 @@ type Output struct {
 	Size         *int64 `json:",omitempty"`
 }
 
-func NewNotification(name, project, category, comment, tool, version string, l *Links) *Notification {
+func NewNotification(name, project, category, comment, tool, version string, runtime time.Duration, l *Links) *Notification {
 	return &Notification{
 		Name:         name,
 		ProjectAlias: project,
@@ -120,8 +124,9 @@ func NewNotification(name, project, category, comment, tool, version string, l *
 			Name:    tool,
 			Version: version,
 		},
-		Input:  l.Inputs,
-		Output: l.Outputs,
+		Runtime: runtime,
+		Input:   l.Inputs,
+		Output:  l.Outputs,
 	}
 }
 
