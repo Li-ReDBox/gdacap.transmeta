@@ -91,6 +91,7 @@ type Notification struct {
 	Comment      *string `json:",omitempty"`
 	Tool         Tool
 	Runtime      time.Duration `json:",omitempty"`
+	Slop         map[string]string
 
 	Input  []Input `json:",omitempty"`
 	Output []Output
@@ -114,7 +115,15 @@ type Output struct {
 	Size         *int64 `json:",omitempty"`
 }
 
-func NewNotification(name, project, category, comment, tool, version string, runtime time.Duration, l *Links) *Notification {
+func NewNotification(name, project, category, comment, tool, version, keyval string, runtime time.Duration, l *Links) *Notification {
+	slop := make(map[string]string)
+	for _, kv := range strings.Fields(keyval) {
+		f := strings.Split(kv, "=")
+		if len(f) < 2 {
+			continue
+		}
+		slop[f[0]] = f[1]
+	}
 	return &Notification{
 		Name:         name,
 		ProjectAlias: project,
@@ -124,6 +133,7 @@ func NewNotification(name, project, category, comment, tool, version string, run
 			Name:    tool,
 			Version: version,
 		},
+		Slop:    slop,
 		Runtime: runtime,
 		Input:   l.Inputs,
 		Output:  l.Outputs,

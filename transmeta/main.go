@@ -52,6 +52,7 @@ var (
 	tool     string
 	runtime  time.Duration
 	version  string
+	slop     string
 
 	batch string
 	lock  string
@@ -94,8 +95,9 @@ func init() {
 	flag.StringVar(&category, "cat", "", "Agreed process category type (required unless in batch mode).")
 	flag.StringVar(&comment, "comment", "", "Free text.")
 	flag.StringVar(&tool, "tool", "", "Process executable name (required unless in batch mode).")
-	flag.DurationVar(&runtime, "", 0, "Execution wall time.")
+	flag.DurationVar(&runtime, "time", 0, "Execution wall time.")
 	flag.StringVar(&version, "v", "", "Process executable version (required unless in batch mode).")
+	flag.StringVar(&slop, "kv", "", "Key=Val pair of additional data separated by space. Errors in parsing cause silent failure.")
 	flag.StringVar(&batch, "batch", "", "Process executable version.")
 	flag.StringVar(&lock, "lock", "", "Lock to wait on.")
 	flag.StringVar(&server, "host", "localhost", "Notification and file server.")
@@ -235,8 +237,8 @@ bye:
 	return
 }
 
-func Notify(name, project, category, comment, tool string, runtime time.Duration, l *common.Links, config *websocket.Config) (err error) {
-	n := common.NewNotification(name, project, category, comment, tool, version, runtime, l)
+func Notify(name, project, category, comment, tool, version, slop string, runtime time.Duration, l *common.Links, config *websocket.Config) (err error) {
+	n := common.NewNotification(name, project, category, comment, tool, version, slop, runtime, l)
 	config.Location, err = url.ParseRequestURI(fmt.Sprintf("wss://%s:%d/notify", server, port))
 	if err != nil {
 		return
@@ -365,7 +367,7 @@ func main() {
 			}
 			instruct = append(instruct, ins...)
 
-			err = Notify(name, project, category, comment, tool, runtime, l, config)
+			err = Notify(name, project, category, comment, tool, version, slop, runtime, l, config)
 			if err != nil {
 				log.Print(err)
 				line = line[:0]
@@ -385,7 +387,7 @@ func main() {
 		}
 		instruct = append(instruct, ins...)
 
-		err = Notify(name, project, category, comment, tool, runtime, l, config)
+		err = Notify(name, project, category, comment, tool, version, slop, runtime, l, config)
 		if err != nil {
 			log.Fatal(err)
 		}
