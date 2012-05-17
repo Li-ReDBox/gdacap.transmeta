@@ -111,29 +111,7 @@ func init() {
 	flag.BoolVar(&help, "help", false, "Print this usage message.")
 }
 
-func requiredFlags() {
-	if keygen {
-		if username == "" {
-			fmt.Fprintln(os.Stderr, "Missing required 'u' flag.")
-			flag.Usage()
-			os.Exit(0)
-		}
-		return
-	}
-
-	if batch != "" {
-		if lock != "" {
-			if exists, _, err := common.Exists(lock); err != nil {
-				log.Fatalf("Error: %v", err)
-			} else if !exists {
-				log.Fatalf("Lock file %q specified, but does not exist.", lock)
-			}
-		}
-		return
-	}
-
-	lock = ""
-
+func requiredFlags() (err error) {
 	failed := []string{}
 	if name == "" {
 		failed = append(failed, "n")
@@ -164,10 +142,10 @@ func requiredFlags() {
 		failed = append(failed, fmt.Sprintf(" 'verify': %v.", verify))
 	}
 	if len(failed) > 0 {
-		fmt.Fprintf(os.Stderr, "Illegal parameter values:\n%s\n", strings.Join(failed, "\n"))
-		flag.Usage()
-		os.Exit(1)
+		err = fmt.Errorf("Illegal parameter values:\n%s\n", strings.Join(failed, "\n"))
 	}
+
+	return
 }
 
 func Send(send int, l *common.Links, config *websocket.Config) (ins []string, err error) {
@@ -266,6 +244,56 @@ func Notify(name, project, category, comment, tool, version, slop string, runtim
 	return
 }
 
+func parse(line []byte) (fields []string, err error) {
+	var (
+		start              int
+		inSingle, inDouble bool
+	)
+	for i, c := range line {
+		switch c {
+		case '"':
+			if !inSingle {
+				inDouble = !inDouble
+				if inDouble {
+					start = i + 1
+				} else {
+					fields = append(fields, string(line[start:i]))
+					start = i + 1
+				}
+			}
+		case '\'':
+			if !inDouble {
+				inSingle = !inSingle
+				if inSingle {
+					start = i + 1
+				} else {
+					fields = append(fields, string(line[start:i]))
+					start = i + 1
+				}
+			}
+		case ' ':
+			if !(inSingle || inDouble) {
+				if i > start {
+					fields = append(fields, string(line[start:i]))
+				}
+				start = i + 1
+			}
+		}
+	}
+
+	if inSingle {
+		return nil, fmt.Errorf("Unmatched `''")
+	}
+	if inDouble {
+		return nil, fmt.Errorf("Unmatched `\"'")
+	}
+	if start < len(line) {
+		fields = append(fields, string(line[start:]))
+	}
+
+	return
+}
+
 func main() {
 	flag.Parse()
 
@@ -274,15 +302,37 @@ func main() {
 		os.Exit(0)
 	}
 
-	requiredFlags()
-
 	if keygen {
+		if username == "" {
+			fmt.Fprintln(os.Stderr, "Missing required 'u' flag.")
+			flag.Usage()
+			os.Exit(0)
+		}
 		if serial, err := common.Keygen(username, organisation, true, confdir, force); err != nil {
 			fmt.Fprintln(os.Stderr, err)
 		} else {
 			fmt.Fprintf(os.Stderr, "Submit this serial number and user name to the ANDS metadata administrator:\nSerial: %v\nUsername: %s\n", serial, username)
 		}
 		os.Exit(0)
+	}
+
+	if batch != "" {
+		if lock != "" {
+			if exists, _, err := common.Exists(lock); err != nil {
+				log.Fatalf("Error: %v", err)
+			} else if !exists {
+				log.Fatalf("Lock file %q specified, but does not exist.", lock)
+			}
+		}
+	} else {
+		err := requiredFlags()
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			flag.Usage()
+			os.Exit(1)
+		}
+
+		lock = ""
 	}
 
 	origin := "http://localhost/"
@@ -345,8 +395,28 @@ func main() {
 			bf.StringVar(&tool, "tool", "", "")
 			bf.DurationVar(&runtime, "time", 0, "")
 			bf.StringVar(&version, "v", "", "")
-			fields := strings.Fields(string(line))
+			bf.StringVar(&slop, "kv", "", "")
+
+			log.Printf("Read line: %q", line)
+
+			fields, err := parse(line)
+
+			log.Printf("Parsed line as: %q with error:", fields, err)
+
+			if err != nil {
+				log.Print(err)
+				line = line[:0]
+				continue
+			}
+
 			err = bf.Parse(fields)
+			if err != nil {
+				log.Print(err)
+				line = line[:0]
+				continue
+			}
+
+			err = requiredFlags()
 			if err != nil {
 				log.Print(err)
 				line = line[:0]
