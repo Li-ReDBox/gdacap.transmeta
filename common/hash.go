@@ -18,7 +18,7 @@ along with this program.  If not, see <http:www.gnu.org/licenses/>.
 package common
 
 import (
-	"crypto/md5"
+	"crypto/sha1"
 	"errors"
 	"fmt"
 	"hash"
@@ -27,7 +27,7 @@ import (
 	"os"
 )
 
-var HashFunc = md5.New()
+var HashFunc = sha1.New()
 
 var bufferLen = 4096
 
