@@ -1,0 +1,13 @@
+To install transmeta:
+
+1. Install Go GC toolchain at Go1.0.2 version.
+2. Set up GOPATH/GOROOT appropriately.
+3. go get code.google.com/p/gdacap.transmeta/transmeta
+
+To install transmeta server:
+3a. go get code.google.com/p/gdacap.transmeta/transmetaserver
+
+Caveat:
+This software uses a fundamentally broken security model for ensuring
+client identity. At some stage this will change, but be aware the identity
+spoofing is trivial with the current setup.
