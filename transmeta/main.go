@@ -184,7 +184,7 @@ func Send(send int, l *common.Links, config *websocket.Config) (ins []string, er
 	}
 bye:
 	if scptarget == "" && send > never {
-		errors.New("Could not get file server identity.")
+		err = errors.New("Could not get file server identity.")
 	}
 
 	for i, o := range l.Outputs {
