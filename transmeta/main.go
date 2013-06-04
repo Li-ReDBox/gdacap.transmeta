@@ -18,8 +18,10 @@ along with this program.  If not, see <http:www.gnu.org/licenses/>.
 package main
 
 import (
-	"bufio"
+	"code.google.com/p/gdacap.transmeta/common"
 	"code.google.com/p/go.net/websocket"
+
+	"bufio"
 	"crypto/tls"
 	"encoding/json"
 	"errors"
@@ -33,7 +35,6 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
-	"transmeta/common"
 )
 
 const config = ".transmeta"

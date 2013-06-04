@@ -18,7 +18,9 @@ along with this program.  If not, see <http:www.gnu.org/licenses/>.
 package main
 
 import (
+	"code.google.com/p/gdacap.transmeta/common"
 	"code.google.com/p/go.net/websocket"
+
 	"crypto/rand"
 	"crypto/tls"
 	"crypto/x509"
@@ -32,7 +34,6 @@ import (
 	"os/user"
 	"path/filepath"
 	"strings"
-	"transmeta/common"
 )
 
 const (
