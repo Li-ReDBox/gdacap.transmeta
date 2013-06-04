@@ -142,7 +142,7 @@ func RequestServer(ws *websocket.Conn) {
 	)
 
 	if err := websocket.Message.Receive(ws, &m); err != nil {
-		log.Fatalf("Websocket fault: err", err)
+		log.Fatalf("Websocket fault: %v", err)
 	}
 	if err := json.Unmarshal([]byte(m), &files); err != nil {
 		websocket.Message.Send(ws, "Error: bad message - could not parse")
@@ -181,7 +181,7 @@ func NotificationServer(ws *websocket.Conn) {
 	)
 
 	if err := websocket.Message.Receive(ws, &m); err != nil {
-		log.Fatalf("Websocket fault: err", err)
+		log.Fatalf("Websocket fault: %v", err)
 	}
 	if err := json.Unmarshal([]byte(m), &note); err != nil {
 		websocket.Message.Send(ws, "bad message - could not parse")
@@ -264,7 +264,7 @@ func main() {
 
 	http.Handle("/request", websocket.Handler(RequestServer))
 	http.Handle("/notify", websocket.Handler(NotificationServer))
-	log.Fatalf("ListenAndServeTLS: ", server.ListenAndServeTLS(
+	log.Fatalf("ListenAndServeTLS: %v", server.ListenAndServeTLS(
 		filepath.Join(confdir, common.Pubkey),
 		filepath.Join(confdir, common.Privkey)))
 }

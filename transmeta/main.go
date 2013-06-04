@@ -402,7 +402,7 @@ func main() {
 
 			fields, err := parse(line)
 
-			log.Printf("Parsed line as: %q with error:", fields, err)
+			log.Printf("Parsed line as: %q with error: %v\n", fields, err)
 
 			if err != nil {
 				log.Print(err)
